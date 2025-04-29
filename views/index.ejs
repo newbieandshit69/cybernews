@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>News Summaries</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .loading, .error { text-align: center; font-size: 24px; margin-top: 50px; }
+    .news-item { margin-bottom: 20px; }
+    .news-item h2 { margin: 0; }
+    .news-item p, .news-item a { margin: 5px 0; }
+    .news-item a { color: #0066cc; text-decoration: none; }
+    .news-item a:hover { text-decoration: underline; }
+    hr { border: 1px solid #ccc; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h1>News Summaries</h1>
+  <div id="loading" class="loading">Loading news...</div>
+  <div id="error" class="error hidden"></div>
+  <div id="news-container" class="hidden"></div>
+  <script>
+    async function loadNews() {
+      const loading = document.getElementById('loading');
+      const error = document.getElementById('error');
+      const newsContainer = document.getElementById('news-container');
+      try {
+        const response = await fetch('/api/news');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const news = await response.json();
+        loading.classList.add('hidden');
+        newsContainer.classList.remove('hidden');
+        newsContainer.innerHTML = news.length ? news.map(item => `
+          <div class="news-item">
+            <h2><a href="${item.link}" target="_blank">${item.title}</a></h2>
+            <p><strong>Source:</strong> ${item.src}</p>
+            <p><strong>Date:</strong> ${item.date}</p>
+            <p>${item.content}</p>
+            <hr>
+          </div>
+        `).join('') : '<p>No news available</p>';
+      } catch (err) {
+        console.error('Fetch error:', err);
+        loading.classList.add('hidden');
+        error.classList.remove('hidden');
+        error.textContent = 'Failed to load news. Please try again.';
+      }
+    }
+    window.onload = loadNews;
+  </script>
+</body>
+</html>
