@@ -5,129 +5,157 @@ import * as parser from './parser.js';
 const app = express();
 const PORT = 9000;
 app.set('view engine', 'ejs');
+app.use(express.urlencoded({ extended: true }));
 
-// Array to store news articles
+
+// Store news and feeds
 let newsCache = [];
+let rssUrls = [];
 
-// List of RSS feed URLs
-const rssUrls = [
-  'https://krebsonsecurity.com/feed/',
-  'https://feeds.feedburner.com/TheHackersNews'
-];
+// Check RSS URL
+async function isValidRssUrl(url) {
+  try {
+    let data = await parser.getNews(url);
+    let isGood = data.articles && data.articles.length > 0;
+    console.log(isGood ? 'Good feed: ' + url : 'No articles in ' + url);
+    return isGood;
+  } catch (error) {
+    console.log('Bad feed ' + url + ': ' + error.message);
+    return false;
+  }
+}
 
-// Function to get all news articles
+// Fetch all news
 async function fetchAllNews() {
   let allNews = [];
+  if (rssUrls.length == 0) {
+    console.log('No feeds!');
+    return allNews;
+  }
   for (let i = 0; i < rssUrls.length; i++) {
     let url = rssUrls[i];
     try {
-      // Get articles from RSS feed
-      let scrapedData = await parser.getNews(url);
-      console.log('Got ' + scrapedData.articles.length + ' articles from ' + url);
-      
-      // Summarize the articles
-      let summaries = await getSummary({ articles: scrapedData.articles }, 2);
-      
-      // Loop through articles and make news objects
-      for (let j = 0; j < scrapedData.articles.length; j++) {
-        let article = scrapedData.articles[j];
+      let data = await parser.getNews(url);
+      console.log('Got ' + data.articles.length + ' articles from ' + url);
+      let summaries = await getSummary({ articles: data.articles }, 2);
+      for (let j = 0; j < data.articles.length; j++) {
         allNews.push({
-          title: article.title,
-          link: article.link,
-          src: scrapedData.src,
-          date: article.date,
-          content: summaries[j] || '[Missing summary]'
+          title: data.articles[j].title,
+          link: data.articles[j].link,
+          src: data.src,
+          date: data.articles[j].date,
+          content: summaries[j] || '[No summary]'
         });
       }
     } catch (error) {
       console.log('Error with ' + url + ': ' + error.message);
     }
   }
-  console.log('Total news articles: ' + allNews.length);
+  console.log('Total news: ' + allNews.length);
   return allNews;
 }
 
-// Function to refresh news, only get new articles
+// Refresh new news
 async function refreshNews() {
-  let newNewsArticles = [];
+  let newNews = [];
   let cachedLinks = [];
-  
-  // Make list of links we already have
-  for (let i = 0; i <
-newsCache.length; i++) {
+  for (let i = 0; i < newsCache.length; i++) {
     cachedLinks.push(newsCache[i].link);
   }
-  
-  // Loop through RSS feeds
   for (let i = 0; i < rssUrls.length; i++) {
     let url = rssUrls[i];
     try {
-      // Get articles from RSS feed
-      let scrapedData = await parser.getNews(url);
+      let data = await parser.getNews(url);
       let newArticles = [];
-      
-      // Find new articles (not in cache)
-      for (let j = 0; j < scrapedData.articles.length; j++) {
-        let article = scrapedData.articles[j];
-        if (!cachedLinks.includes(article.link)) {
-          newArticles.push(article);
+      for (let j = 0; j < data.articles.length; j++) {
+        if (!cachedLinks.includes(data.articles[j].link)) {
+          newArticles.push(data.articles[j]);
         }
       }
-      
-      console.log('Found ' + newArticles.length + ' new articles from ' + url);
-      
-      // Summarize new articles if any
+      console.log('New articles from ' + url + ': ' + newArticles.length);
       if (newArticles.length > 0) {
         let summaries = await getSummary({ articles: newArticles }, 2);
         for (let j = 0; j < newArticles.length; j++) {
-          let article = newArticles[j];
-          newNewsArticles.push({
-            title: article.title,
-            link: article.link,
-            src: scrapedData.src,
-            date: article.date,
-            content: summaries[j] || '[Missing summary]'
+          newNews.push({
+            title: newArticles[j].title,
+            link: newArticles[j].link,
+            src: data.src,
+            date: newArticles[j].date,
+            content: summaries[j] || '[No summary]'
           });
         }
       }
     } catch (error) {
-      console.log('Error refreshing ' + url + ': ' + error.message);
+      console.log('Refresh error with ' + url + ': ' + error.message);
     }
   }
-  
-  // Add new articles to cache
-  newsCache = newsCache.concat(newNewsArticles);
-  console.log('Cache now has ' + newsCache.length + ' articles');
+  newsCache = newsCache.concat(newNews);
+  console.log('Cache size: ' + newsCache.length);
 }
 
-// Route for the main page
+// Main page
 app.get('/', (req, res) => {
-  // Render page with no news (frontend will fetch it)
-  res.render('index', { news: null });
+  res.render('index', { news: null, rssUrls: rssUrls });
 });
 
-// Route to get news data
+// News API
 app.get('/api/news', async (req, res) => {
-  // If cache is empty, fetch news
-  if (newsCache.length === 0) {
+  if (newsCache.length == 0) {
     newsCache = await fetchAllNews();
-    if (newsCache.length === 0) {
-      console.log('No news fetched!');
-      res.status(500).json({ error: 'No news fetched' });
+    if (newsCache.length == 0 && rssUrls.length > 0) {
+      console.log('No news!');
+      res.status(500).send({ error: 'No news' });
       return;
     }
   }
-  // Send cached news
-  res.json(newsCache);
+  res.send(newsCache);
 });
 
-// Route to refresh news
+// Refresh news
 app.get('/refresh', async (req, res) => {
+  console.log('Refresh clicked!');
   await refreshNews();
   res.redirect('/');
 });
 
-// Start the server
+// Add RSS feeds
+app.post('/add-rss', async (req, res) => {
+  let urlList = req.body.rssUrls;
+  if (!urlList) {
+    console.log('No URLs entered');
+    res.redirect('/');
+    return;
+  }
+  let urls = urlList.split('\n');
+  for (let i = 0; i < urls.length; i++) {
+    let url = urls[i].trim();
+    if (url && (await isValidRssUrl(url)) && !rssUrls.includes(url)) {
+      rssUrls.push(url);
+      console.log('Added feed: ' + url);
+    } else {
+      console.log('Skipped invalid/dupe feed: ' + url);
+    }
+  }
+  if (rssUrls.length > 0) {
+    await refreshNews();
+  }
+  res.redirect('/');
+});
+
+// Delete RSS feed
+app.post('/delete-rss', async (req, res) => {
+  let urlToDelete = req.body.url;
+  let index = rssUrls.indexOf(urlToDelete);
+  if (index != -1) {
+    rssUrls.splice(index, 1);
+    console.log('Deleted feed: ' + urlToDelete);
+    newsCache = []; // Clear cache
+    newsCache = await fetchAllNews(); // Refetch from remaining feeds
+  }
+  res.redirect('/');
+});
+
+
 app.listen(PORT, () => {
-  console.log('Server running at http://localhost:' + PORT);
+  console.log('Server at http://localhost:' + PORT);
 });
